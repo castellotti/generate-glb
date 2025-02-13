@@ -147,11 +147,69 @@ def generate_mesh(prompt, temperature, max_new_tokens, timeout=300.0, verbose=Fa
 
         # Collect response
         response = ""
+        buffer = []
+        number_buffer = ""
+
+        def try_parse_number(num_str):
+            """Attempt to parse a number string, return None if incomplete"""
+            try:
+                # Check if the string ends with a decimal point
+                if num_str.endswith('.'):
+                    return None
+                # Check if the string is just a minus sign
+                if num_str == '-':
+                    return None
+                # Try to convert to float
+                return float(num_str)
+            except ValueError:
+                return None
+
+        def print_buffer():
+            """Print buffer contents if it forms a complete vertex or face"""
+            if not buffer:
+                return
+
+            # Check if we have exactly 3 coordinates for a vertex
+            if len(buffer) == 3 and all(isinstance(x, float) for x in buffer):
+                print(f"v {' '.join(str(x) for x in buffer)}")
+                buffer.clear()
+            # Check if we have at least 3 indices for a face
+            elif len(buffer) >= 3 and all(x.is_integer() for x in buffer):
+                print(f"f {' '.join(str(int(x)) for x in buffer)}")
+                buffer.clear()
+
         try:
             for text in streamer:
                 response += text
-                if verbose and ('v ' in text or 'f ' in text):
-                    print(text.strip())
+                if verbose:
+                    # Process each character
+                    for char in text:
+                        if char.isspace():
+                            if number_buffer:
+                                num = try_parse_number(number_buffer)
+                                if num is not None:
+                                    buffer.append(num)
+                                    print_buffer()
+                                number_buffer = ""
+                        elif char.isdigit() or char == '.' or char == '-':
+                            number_buffer += char
+                        elif char == 'v':
+                            if buffer:
+                                print_buffer()
+                            buffer = []
+                            number_buffer = ""
+                        elif char == 'f':
+                            if buffer:
+                                print_buffer()
+                            buffer = []
+                            number_buffer = ""
+
+                    # Handle any remaining complete number in the buffer
+                    if number_buffer:
+                        num = try_parse_number(number_buffer)
+                        if num is not None:
+                            buffer.append(num)
+                            print_buffer()
         except Empty:
             print(f"Warning: Generation timed out after {timeout} seconds")
             if response:
