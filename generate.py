@@ -1,13 +1,66 @@
 import os
 import sys
 import argparse
-from threading import Thread
 import tempfile
 import numpy as np
 import trimesh
-from queue import Empty
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+from threading import Thread
+from queue import Queue, Empty
 from trimesh.exchange.gltf import export_glb
+from pathlib import Path
+
+# Model configuration
+DEFAULT_MODEL_REPO = "bartowski/LLaMA-Mesh-GGUF"
+TRANSFORMERS_MODEL_REPO = "Zhengyi/LLaMA-Mesh"
+
+MODEL_VARIANTS = {
+    'f16': {'file': 'LLaMA-Mesh-f16.gguf', 'description': 'Full F16 weights'},
+    'q8_0': {'file': 'LLaMA-Mesh-Q8_0.gguf', 'description': 'Extremely high quality'},
+    'q6_k_l': {'file': 'LLaMA-Mesh-Q6_K_L.gguf', 'description': 'Very high quality with Q8_0 embed/output weights'},
+    'q6_k': {'file': 'LLaMA-Mesh-Q6_K.gguf', 'description': 'Very high quality'},
+    'q5_k_l': {'file': 'LLaMA-Mesh-Q5_K_L.gguf', 'description': 'High quality with Q8_0 embed/output weights'},
+    'q5_k_m': {'file': 'LLaMA-Mesh-Q5_K_M.gguf', 'description': 'High quality'},
+    'q5_k_s': {'file': 'LLaMA-Mesh-Q5_K_S.gguf', 'description': 'High quality, smaller'},
+    'q4_k_l': {'file': 'LLaMA-Mesh-Q4_K_L.gguf', 'description': 'Good quality with Q8_0 embed/output weights'},
+    'q4_k_m': {'file': 'LLaMA-Mesh-Q4_K_M.gguf', 'description': 'Good quality, default recommendation'},
+    'q4_k_s': {'file': 'LLaMA-Mesh-Q4_K_S.gguf', 'description': 'Good quality, space optimized'},
+    'q3_k_xl': {'file': 'LLaMA-Mesh-Q3_K_XL.gguf', 'description': 'Lower quality with Q8_0 embed/output weights'},
+    'q3_k_l': {'file': 'LLaMA-Mesh-Q3_K_L.gguf', 'description': 'Lower quality'},
+    'q3_k_m': {'file': 'LLaMA-Mesh-Q3_K_M.gguf', 'description': 'Low quality'},
+    'q3_k_s': {'file': 'LLaMA-Mesh-Q3_K_S.gguf', 'description': 'Low quality, not recommended'},
+    'q2_k_l': {'file': 'LLaMA-Mesh-Q2_K_L.gguf', 'description': 'Very low quality with Q8_0 embed/output weights'},
+    'q2_k': {'file': 'LLaMA-Mesh-Q2_K.gguf', 'description': 'Very low quality'},
+    'iq4_xs': {'file': 'LLaMA-Mesh-IQ4_XS.gguf', 'description': 'Decent quality, very space efficient'},
+    'iq3_m': {'file': 'LLaMA-Mesh-IQ3_M.gguf', 'description': 'Medium-low quality'},
+    'iq3_xs': {'file': 'LLaMA-Mesh-IQ3_XS.gguf', 'description': 'Lower quality'},
+    'iq2_m': {'file': 'LLaMA-Mesh-IQ2_M.gguf', 'description': 'Relatively low quality, SOTA techniques'}
+}
+
+DEFAULT_VARIANT = 'q4_k_m'
+
+def list_model_variants():
+    print("\nAvailable model variants:")
+    print(f"{'Variant':<10} {'Size':<10} Description")
+    print("-" * 60)
+    for variant, info in MODEL_VARIANTS.items():
+        size = info.get('size', 'unknown')
+        print(f"{variant:<10} {size:<10} {info['description']}")
+
+def ensure_model_downloaded(repo_id, variant):
+    """Download model from HuggingFace if not already present."""
+    from huggingface_hub import hf_hub_download
+
+    if variant not in MODEL_VARIANTS:
+        raise ValueError(f"Unknown model variant: {variant}")
+
+    filename = MODEL_VARIANTS[variant]['file']
+    try:
+        model_path = hf_hub_download(repo_id=repo_id, filename=filename)
+        print(f"Using model at: {model_path}")
+        return model_path
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        raise
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Generate 3D meshes using LLaMA-Mesh from command line')
@@ -22,7 +75,29 @@ def parse_arguments():
                         help='Display vertices and faces as they are generated')
     parser.add_argument('--timeout', type=float, default=900.0,
                         help='Timeout in seconds for generation (default: 900.0)')
-    return parser.parse_args()
+    parser.add_argument('--backend', type=str, choices=['transformers', 'llama_cpp', 'ollama'],
+                        default='transformers', help='Backend to use for generation')
+    parser.add_argument('--model-path', type=str,
+                        help='Path to model file (if not specified, will download from HuggingFace)')
+    parser.add_argument('--ollama-host', type=str, default='http://localhost:11434',
+                        help='Host address for Ollama backend')
+    parser.add_argument('--variant', type=str, default=DEFAULT_VARIANT,
+                        help=f'Model variant to use (default: {DEFAULT_VARIANT})')
+    parser.add_argument('--list-variants', action='store_true',
+                        help='List available model variants and exit')
+
+    args = parser.parse_args()
+
+    if args.list_variants:
+        list_model_variants()
+        sys.exit(0)
+
+    if args.variant not in MODEL_VARIANTS:
+        print(f"Error: Unknown model variant '{args.variant}'")
+        list_model_variants()
+        sys.exit(1)
+
+    return args
 
 def apply_gradient_color(mesh_text, output_path, verbose=False):
     """
@@ -39,7 +114,6 @@ def apply_gradient_color(mesh_text, output_path, verbose=False):
             if line.startswith('v ') or line.startswith('f '):
                 print(line)
 
-    # Load the mesh
     try:
         mesh = trimesh.load_mesh(temp_file, file_type='obj')
     except Exception as e:
@@ -50,36 +124,28 @@ def apply_gradient_color(mesh_text, output_path, verbose=False):
         os.unlink(temp_file)
         return None
 
-    # Get vertex coordinates
     vertices = mesh.vertices
     if len(vertices) == 0:
         print("Error: No vertices found in the mesh")
         os.unlink(temp_file)
         return None
 
-    y_values = vertices[:, 1]  # Y-axis values
-
     if verbose:
         print(f"\nNumber of vertices: {len(vertices)}")
         print(f"Number of faces: {len(mesh.faces)}")
 
-    # Normalize Y values to range [0, 1] for color mapping
+    # Apply gradient coloring
+    y_values = vertices[:, 1]
     y_min, y_max = y_values.min(), y_values.max()
-    if y_min == y_max:
-        y_normalized = np.zeros_like(y_values)
-    else:
-        y_normalized = (y_values - y_min) / (y_max - y_min)
+    y_normalized = np.zeros_like(y_values) if y_min == y_max else (y_values - y_min) / (y_max - y_min)
 
-    # Generate colors: Map normalized Y values to RGB gradient
-    colors = np.zeros((len(vertices), 4))  # RGBA
+    colors = np.zeros((len(vertices), 4))
     colors[:, 0] = y_normalized  # Red channel
     colors[:, 2] = 1 - y_normalized  # Blue channel
-    colors[:, 3] = 1.0  # Alpha channel (fully opaque)
+    colors[:, 3] = 1.0  # Alpha channel
 
-    # Attach colors to mesh vertices
     mesh.visual.vertex_colors = colors
 
-    # Export to GLB format
     try:
         with open(output_path, "wb") as f:
             f.write(export_glb(mesh))
@@ -88,42 +154,33 @@ def apply_gradient_color(mesh_text, output_path, verbose=False):
         os.unlink(temp_file)
         return None
 
-    # Clean up temporary file
     os.unlink(temp_file)
     return output_path
 
-def generate_mesh(prompt, temperature, max_new_tokens, timeout=300.0, verbose=False):
-    """
-    Generate a 3D mesh using the LLaMA-Mesh model.
-    """
-    try:
-        # Set up model and tokenizer
-        if verbose:
-            print("Loading model and tokenizer...")
-
-        model_path = "Zhengyi/LLaMA-Mesh"
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
+class TransformersBackend:
+    def __init__(self):
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        self.tokenizer = AutoTokenizer.from_pretrained(TRANSFORMERS_MODEL_REPO)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            TRANSFORMERS_MODEL_REPO,
             device_map="auto",
             torch_dtype="auto"
         )
 
-        # Prepare the attention mask
+    def generate(self, prompt, temperature, max_new_tokens, timeout):
+        from transformers import TextIteratorStreamer
         conversation = [{"role": "user", "content": prompt}]
-        inputs = tokenizer.apply_chat_template(conversation, return_tensors="pt")
-        attention_mask = inputs.ne(tokenizer.pad_token_id).to(model.device)
-        inputs = inputs.to(model.device)
+        inputs = self.tokenizer.apply_chat_template(conversation, return_tensors="pt")
+        attention_mask = inputs.ne(self.tokenizer.pad_token_id).to(self.model.device)
+        inputs = inputs.to(self.model.device)
 
-        # Set up streamer with longer timeout
         streamer = TextIteratorStreamer(
-            tokenizer,
+            self.tokenizer,
             timeout=timeout,
             skip_prompt=True,
             skip_special_tokens=True
         )
 
-        # Set up generation parameters
         generate_kwargs = {
             "input_ids": inputs,
             "attention_mask": attention_mask,
@@ -131,91 +188,101 @@ def generate_mesh(prompt, temperature, max_new_tokens, timeout=300.0, verbose=Fa
             "max_new_tokens": max_new_tokens,
             "do_sample": temperature > 0,
             "temperature": temperature,
-            "pad_token_id": tokenizer.pad_token_id,
+            "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": [
-                tokenizer.eos_token_id,
-                tokenizer.convert_tokens_to_ids("<|eot_id|>")
+                self.tokenizer.eos_token_id,
+                self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
             ]
         }
 
-        if verbose:
-            print("Starting generation...")
-
-        # Generate response
-        thread = Thread(target=model.generate, kwargs=generate_kwargs)
+        thread = Thread(target=self.model.generate, kwargs=generate_kwargs)
         thread.start()
 
-        # Collect response
-        response = ""
-        buffer = []
-        number_buffer = ""
+        return streamer
 
-        def try_parse_number(num_str):
-            """Attempt to parse a number string, return None if incomplete"""
-            try:
-                # Check if the string ends with a decimal point
-                if num_str.endswith('.'):
-                    return None
-                # Check if the string is just a minus sign
-                if num_str == '-':
-                    return None
-                # Try to convert to float
-                return float(num_str)
-            except ValueError:
-                return None
+class LlamaCppBackend:
+    def __init__(self, model_path=None, variant=DEFAULT_VARIANT):
+        import llama_cpp
 
-        def print_buffer():
-            """Print buffer contents if it forms a complete vertex or face"""
-            if not buffer:
-                return
+        if model_path is None:
+            model_path = ensure_model_downloaded(DEFAULT_MODEL_REPO, variant)
 
-            # Check if we have exactly 3 coordinates for a vertex
-            if len(buffer) == 3 and all(isinstance(x, float) for x in buffer):
-                print(f"v {' '.join(str(x) for x in buffer)}")
-                buffer.clear()
-            # Check if we have at least 3 indices for a face
-            elif len(buffer) >= 3 and all(x.is_integer() for x in buffer):
-                print(f"f {' '.join(str(int(x)) for x in buffer)}")
-                buffer.clear()
+        self.llm = llama_cpp.Llama(
+            model_path=str(model_path),
+            n_gpu_layers=-1,
+            seed=1337,
+            n_ctx=4096,
+        )
 
-        try:
-            for text in streamer:
-                response += text
-                if verbose:
-                    # Process each character
-                    for char in text:
-                        if char.isspace():
-                            if number_buffer:
-                                num = try_parse_number(number_buffer)
-                                if num is not None:
-                                    buffer.append(num)
-                                    print_buffer()
-                                number_buffer = ""
-                        elif char.isdigit() or char == '.' or char == '-':
-                            number_buffer += char
-                        elif char == 'v':
-                            if buffer:
-                                print_buffer()
-                            buffer = []
-                            number_buffer = ""
-                        elif char == 'f':
-                            if buffer:
-                                print_buffer()
-                            buffer = []
-                            number_buffer = ""
+    def generate(self, prompt, temperature, max_new_tokens, timeout):
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that can generate 3D obj files."},
+            {"role": "user", "content": prompt}
+        ]
+        return self.llm.create_chat_completion(
+            messages=messages,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_new_tokens
+        )
 
-                    # Handle any remaining complete number in the buffer
-                    if number_buffer:
-                        num = try_parse_number(number_buffer)
-                        if num is not None:
-                            buffer.append(num)
-                            print_buffer()
-        except Empty:
-            print(f"Warning: Generation timed out after {timeout} seconds")
-            if response:
-                print("Using partial response...")
+class OllamaBackend:
+    def __init__(self, host):
+        from ollama import Client
+        self.client = Client(host=host)
+
+        # Pull the model into Ollama
+        print("Pulling model into Ollama...")
+        self.client.pull('llama-mesh')
+
+    def generate(self, prompt, temperature, max_new_tokens, timeout):
+        template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+        You are a helpful assistant that can generate 3D obj files.<|eot_id|><|start_header_id|>user<|end_header_id|>
+        {prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+        """
+        return self.client.generate(
+            model='llama-mesh',
+            prompt=prompt,
+            stream=True,
+            template=template,
+            options={"temperature": temperature}
+        )
+
+def process_stream(stream, is_ollama=False):
+    response = ""
+    try:
+        for chunk in stream:
+            if is_ollama:
+                content = chunk["response"]
             else:
-                raise Exception("No response generated before timeout")
+                if isinstance(chunk, dict):
+                    delta = chunk["choices"][0]["delta"]
+                    if "content" not in delta:
+                        continue
+                    content = delta["content"]
+                else:
+                    content = chunk
+            response += content
+            yield content
+    except Empty:
+        print("Warning: Generation timed out")
+    return response
+
+def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, verbose=False):
+    """Generate a 3D mesh using the selected backend."""
+    try:
+        if verbose:
+            print(f"Generating mesh using {backend.__class__.__name__}")
+
+        stream = backend.generate(prompt, temperature, max_new_tokens, timeout)
+        is_ollama = isinstance(backend, OllamaBackend)
+
+        response = ""
+        for content in process_stream(stream, is_ollama):
+            response += content
+            if verbose:
+                if content.strip():
+                    print(content.strip())
 
         return response
 
@@ -224,16 +291,24 @@ def generate_mesh(prompt, temperature, max_new_tokens, timeout=300.0, verbose=Fa
         raise
 
 def main():
-    # Parse command line arguments
     args = parse_arguments()
-
     print(f"Generating 3D mesh for prompt: {args.prompt}")
     print(f"Using temperature: {args.temperature}")
-    print(f"Max tokens: {args.max_tokens}")
+    print(f"Using backend: {args.backend}")
+    print(f"Using model variant: {args.variant}")
 
     try:
+        # Initialize the selected backend
+        if args.backend == 'transformers':
+            backend = TransformersBackend()
+        elif args.backend == 'llama_cpp':
+            backend = LlamaCppBackend(args.model_path, args.variant)
+        elif args.backend == 'ollama':
+            backend = OllamaBackend(args.ollama_host)
+
         # Generate the mesh
         mesh_text = generate_mesh(
+            backend,
             args.prompt,
             args.temperature,
             args.max_tokens,
@@ -248,11 +323,10 @@ def main():
             print("Response:", mesh_text)
             return 1
 
-        # Extract the OBJ content
+        # Extract the OBJ content and apply gradient color
         mesh_content = mesh_text[obj_start:]
-
-        # Apply gradient color and save as GLB
         output_path = apply_gradient_color(mesh_content, args.output, args.verbose)
+
         if output_path:
             print(f"Mesh saved to: {output_path}")
             return 0
