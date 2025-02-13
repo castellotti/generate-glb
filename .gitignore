@@ -1,3 +1,6 @@
+# Generated GLB files
+*.glb
+
 # Godot 4+ specific ignores
 .godot/
 
