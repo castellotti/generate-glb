@@ -5,46 +5,69 @@ import tempfile
 import numpy as np
 import trimesh
 from threading import Thread
-from queue import Queue, Empty
+from queue import Empty
 from trimesh.exchange.gltf import export_glb
-from pathlib import Path
+
+# Base configuration
+BASE_NAME = "LLaMA-Mesh"
+TRANSFORMERS_AUTHOR = "Zhengyi"
+HF_DOMAIN = "hf.co"
+GGUF_AUTHOR = "bartowski"
 
 # Model configuration
-DEFAULT_MODEL_REPO = "bartowski/LLaMA-Mesh-GGUF"
-TRANSFORMERS_MODEL_REPO = "Zhengyi/LLaMA-Mesh"
+TRANSFORMERS_MODEL_REPO = f"{TRANSFORMERS_AUTHOR}/{BASE_NAME}"
+DEFAULT_MODEL_REPO = f"{GGUF_AUTHOR}/{BASE_NAME}-GGUF"
+MODEL_FILE_BASE = f"{BASE_NAME}-"
+HF_BASE_PATH = f"{HF_DOMAIN}/{DEFAULT_MODEL_REPO}"
 
+# Simplified model variants with just quant type and description
 MODEL_VARIANTS = {
-    'f16': {'file': 'LLaMA-Mesh-f16.gguf', 'description': 'Full F16 weights'},
-    'q8_0': {'file': 'LLaMA-Mesh-Q8_0.gguf', 'description': 'Extremely high quality'},
-    'q6_k_l': {'file': 'LLaMA-Mesh-Q6_K_L.gguf', 'description': 'Very high quality with Q8_0 embed/output weights'},
-    'q6_k': {'file': 'LLaMA-Mesh-Q6_K.gguf', 'description': 'Very high quality'},
-    'q5_k_l': {'file': 'LLaMA-Mesh-Q5_K_L.gguf', 'description': 'High quality with Q8_0 embed/output weights'},
-    'q5_k_m': {'file': 'LLaMA-Mesh-Q5_K_M.gguf', 'description': 'High quality'},
-    'q5_k_s': {'file': 'LLaMA-Mesh-Q5_K_S.gguf', 'description': 'High quality, smaller'},
-    'q4_k_l': {'file': 'LLaMA-Mesh-Q4_K_L.gguf', 'description': 'Good quality with Q8_0 embed/output weights'},
-    'q4_k_m': {'file': 'LLaMA-Mesh-Q4_K_M.gguf', 'description': 'Good quality, default recommendation'},
-    'q4_k_s': {'file': 'LLaMA-Mesh-Q4_K_S.gguf', 'description': 'Good quality, space optimized'},
-    'q3_k_xl': {'file': 'LLaMA-Mesh-Q3_K_XL.gguf', 'description': 'Lower quality with Q8_0 embed/output weights'},
-    'q3_k_l': {'file': 'LLaMA-Mesh-Q3_K_L.gguf', 'description': 'Lower quality'},
-    'q3_k_m': {'file': 'LLaMA-Mesh-Q3_K_M.gguf', 'description': 'Low quality'},
-    'q3_k_s': {'file': 'LLaMA-Mesh-Q3_K_S.gguf', 'description': 'Low quality, not recommended'},
-    'q2_k_l': {'file': 'LLaMA-Mesh-Q2_K_L.gguf', 'description': 'Very low quality with Q8_0 embed/output weights'},
-    'q2_k': {'file': 'LLaMA-Mesh-Q2_K.gguf', 'description': 'Very low quality'},
-    'iq4_xs': {'file': 'LLaMA-Mesh-IQ4_XS.gguf', 'description': 'Decent quality, very space efficient'},
-    'iq3_m': {'file': 'LLaMA-Mesh-IQ3_M.gguf', 'description': 'Medium-low quality'},
-    'iq3_xs': {'file': 'LLaMA-Mesh-IQ3_XS.gguf', 'description': 'Lower quality'},
-    'iq2_m': {'file': 'LLaMA-Mesh-IQ2_M.gguf', 'description': 'Relatively low quality, SOTA techniques'}
+    'f16': 'Full F16 weights',
+    'q8_0': 'Extremely high quality',
+    'q6_k_l': 'Very high quality with Q8_0 embed/output weights',
+    'q6_k': 'Very high quality',
+    'q5_k_l': 'High quality with Q8_0 embed/output weights',
+    'q5_k_m': 'High quality',
+    'q5_k_s': 'High quality, smaller',
+    'q4_k_l': 'Good quality with Q8_0 embed/output weights',
+    'q4_k_m': 'Good quality, default recommendation',
+    'q4_k_s': 'Good quality, space optimized',
+    'q3_k_xl': 'Lower quality with Q8_0 embed/output weights',
+    'q3_k_l': 'Lower quality',
+    'q3_k_m': 'Low quality',
+    'q3_k_s': 'Low quality, not recommended',
+    'q2_k_l': 'Very low quality with Q8_0 embed/output weights',
+    'q2_k': 'Very low quality',
+    'iq4_xs': 'Decent quality, very space efficient',
+    'iq3_m': 'Medium-low quality',
+    'iq3_xs': 'Lower quality',
+    'iq2_m': 'Relatively low quality, SOTA techniques'
 }
+
+# Create case-insensitive variant lookup
+VARIANT_LOOKUP = {k.lower(): k for k in MODEL_VARIANTS.keys()}
 
 DEFAULT_VARIANT = 'q4_k_m'
 
+def get_variant(variant_input):
+    """Get the canonical variant name, handling case-insensitivity."""
+    lookup_key = variant_input.lower()
+    return VARIANT_LOOKUP.get(lookup_key)
+
 def list_model_variants():
     print("\nAvailable model variants:")
-    print(f"{'Variant':<10} {'Size':<10} Description")
+    print(f"{'Variant':<10} Description")
     print("-" * 60)
-    for variant, info in MODEL_VARIANTS.items():
-        size = info.get('size', 'unknown')
-        print(f"{variant:<10} {size:<10} {info['description']}")
+    for variant, description in MODEL_VARIANTS.items():
+        print(f"{variant:<10} {description}")
+
+def get_model_filename(variant):
+    """Generate the GGUF filename for a given variant."""
+    return f"{MODEL_FILE_BASE}{variant.upper()}.gguf"
+
+def get_ollama_model_path(variant):
+    """Convert variant to Ollama model path."""
+    return f"{HF_BASE_PATH}:{variant.upper()}"
 
 def ensure_model_downloaded(repo_id, variant):
     """Download model from HuggingFace if not already present."""
@@ -53,7 +76,7 @@ def ensure_model_downloaded(repo_id, variant):
     if variant not in MODEL_VARIANTS:
         raise ValueError(f"Unknown model variant: {variant}")
 
-    filename = MODEL_VARIANTS[variant]['file']
+    filename = get_model_filename(variant)
     try:
         model_path = hf_hub_download(repo_id=repo_id, filename=filename)
         print(f"Using model at: {model_path}")
@@ -92,10 +115,13 @@ def parse_arguments():
         list_model_variants()
         sys.exit(0)
 
-    if args.variant not in MODEL_VARIANTS:
+    # Handle case-insensitive variant lookup
+    canonical_variant = get_variant(args.variant)
+    if canonical_variant is None:
         print(f"Error: Unknown model variant '{args.variant}'")
         list_model_variants()
         sys.exit(1)
+    args.variant = canonical_variant
 
     return args
 
@@ -227,13 +253,23 @@ class LlamaCppBackend:
         )
 
 class OllamaBackend:
-    def __init__(self, host):
+    def __init__(self, host, variant=DEFAULT_VARIANT):
         from ollama import Client
         self.client = Client(host=host)
 
+        if variant not in MODEL_VARIANTS:
+            raise ValueError(f"Unknown variant: {variant}")
+
+        self.model_name = get_ollama_model_path(variant)
+        print(f"Using Ollama model: {self.model_name}")
+
         # Pull the model into Ollama
-        print("Pulling model into Ollama...")
-        self.client.pull('llama-mesh')
+        print(f"Pulling model into Ollama: {self.model_name}")
+        try:
+            self.client.pull(self.model_name)
+        except Exception as e:
+            print(f"Error pulling model: {e}")
+            raise
 
     def generate(self, prompt, temperature, max_new_tokens, timeout):
         template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
@@ -241,7 +277,7 @@ class OllamaBackend:
         {prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
         """
         return self.client.generate(
-            model='llama-mesh',
+            model=self.model_name,
             prompt=prompt,
             stream=True,
             template=template,
@@ -304,7 +340,7 @@ def main():
         elif args.backend == 'llama_cpp':
             backend = LlamaCppBackend(args.model_path, args.variant)
         elif args.backend == 'ollama':
-            backend = OllamaBackend(args.ollama_host)
+            backend = OllamaBackend(args.ollama_host, args.variant)
 
         # Generate the mesh
         mesh_text = generate_mesh(
