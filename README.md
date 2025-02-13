@@ -21,7 +21,7 @@ Install requirements
 ```pip install -r requirements.txt```
 
 ### Usage
-```shell
+```
 usage: generate.py [-h] [--temperature TEMPERATURE] [--max-tokens MAX_TOKENS] [--output OUTPUT] [--verbose]
                    [--timeout TIMEOUT] [--backend {transformers,llama_cpp,ollama}] [--model-path MODEL_PATH]
                    [--ollama-host OLLAMA_HOST] [--variant VARIANT] [--list-variants]
@@ -69,7 +69,7 @@ python generate.py \
 </div>
 
 ### Output
-```shell
+```
 Generating 3D mesh for prompt: Create a 3D model of a sword
 Using temperature: 0.95
 Max tokens: 4096
