@@ -20,7 +20,6 @@ DEFAULT_MODEL_REPO = f"{GGUF_AUTHOR}/{BASE_NAME}-GGUF"
 MODEL_FILE_BASE = f"{BASE_NAME}-"
 HF_BASE_PATH = f"{HF_DOMAIN}/{DEFAULT_MODEL_REPO}"
 
-# Simplified model variants with just quant type and description
 MODEL_VARIANTS = {
     'f16': 'Full F16 weights',
     'q8_0': 'Extremely high quality',
@@ -272,22 +271,63 @@ class OllamaBackend:
             raise
 
     def generate(self, prompt, temperature, max_new_tokens, timeout):
-        template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        You are a helpful assistant that can generate 3D obj files.<|eot_id|><|start_header_id|>user<|end_header_id|>
-        {prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-        """
+        # Enhanced template with explicit mesh generation instructions
+        template = """<|start_header_id|>system<|end_header_id|>
+You are a helpful assistant that can generate 3D obj files. Generate a complete .obj format 3D mesh in response to the user's request. Start the response with vertex (v) definitions followed by face (f) definitions.<|eot_id|><|start_header_id|>user<|end_header_id|>
+{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+Here is the 3D mesh in .obj format:"""
+
         return self.client.generate(
             model=self.model_name,
             prompt=prompt,
             stream=True,
             template=template,
-            options={"temperature": temperature}
+            options={
+                "temperature": temperature,
+                "num_predict": max_new_tokens,
+                "stop": ["<|eot_id|>"]  # Add explicit stop token
+            }
         )
 
-def process_stream(stream, is_ollama=False):
+def try_parse_number(num_str):
+    """Attempt to parse a number string, return None if incomplete"""
+    try:
+        # Check if the string ends with a decimal point
+        if num_str.endswith('.'):
+            return None
+        # Check if the string is just a minus sign
+        if num_str == '-':
+            return None
+        # Try to convert to float
+        return float(num_str)
+    except ValueError:
+        return None
+
+def process_buffer(buffer, verbose=False):
+    """Process and print buffer contents if it forms a complete vertex or face"""
+    if not buffer:
+        return
+
+    # Check if we have exactly 3 coordinates for a vertex
+    if len(buffer) == 3 and all(isinstance(x, float) for x in buffer):
+        if verbose:
+            print(f"v {' '.join(str(x) for x in buffer)}")
+        buffer.clear()
+    # Check if we have at least 3 indices for a face
+    elif len(buffer) >= 3 and all(x.is_integer() for x in buffer):
+        if verbose:
+            print(f"f {' '.join(str(int(x)) for x in buffer)}")
+        buffer.clear()
+
+def process_stream(stream, is_ollama=False, verbose=False):
+    """Process the stream with detailed vertex/face parsing for verbose output"""
     response = ""
+    buffer = []
+    number_buffer = ""
+
     try:
         for chunk in stream:
+            # Extract content based on backend type
             if is_ollama:
                 content = chunk["response"]
             else:
@@ -298,10 +338,47 @@ def process_stream(stream, is_ollama=False):
                     content = delta["content"]
                 else:
                     content = chunk
+
             response += content
+
+            if verbose:
+                # Process each character for detailed vertex/face parsing
+                for char in content:
+                    if char.isspace():
+                        if number_buffer:
+                            num = try_parse_number(number_buffer)
+                            if num is not None:
+                                buffer.append(num)
+                                process_buffer(buffer, verbose)
+                            number_buffer = ""
+                    elif char.isdigit() or char == '.' or char == '-':
+                        number_buffer += char
+                    elif char == 'v':
+                        if buffer:
+                            process_buffer(buffer, verbose)
+                        buffer = []
+                        number_buffer = ""
+                    elif char == 'f':
+                        if buffer:
+                            process_buffer(buffer, verbose)
+                        buffer = []
+                        number_buffer = ""
+
+                # Handle any remaining complete number in the buffer
+                if number_buffer:
+                    num = try_parse_number(number_buffer)
+                    if num is not None:
+                        buffer.append(num)
+                        process_buffer(buffer, verbose)
+
             yield content
+
     except Empty:
         print("Warning: Generation timed out")
+
+    if buffer and verbose:
+        process_buffer(buffer, verbose)
+
     return response
 
 def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, verbose=False):
@@ -314,11 +391,8 @@ def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, v
         is_ollama = isinstance(backend, OllamaBackend)
 
         response = ""
-        for content in process_stream(stream, is_ollama):
+        for content in process_stream(stream, is_ollama, verbose):
             response += content
-            if verbose:
-                if content.strip():
-                    print(content.strip())
 
         return response
 
