@@ -20,8 +20,8 @@ def parse_arguments():
                         help='Output filename for the GLB file (default: output.glb)')
     parser.add_argument('--verbose', action='store_true',
                         help='Display vertices and faces as they are generated')
-    parser.add_argument('--timeout', type=float, default=300.0,
-                        help='Timeout in seconds for generation (default: 300.0)')
+    parser.add_argument('--timeout', type=float, default=900.0,
+                        help='Timeout in seconds for generation (default: 900.0)')
     return parser.parse_args()
 
 def apply_gradient_color(mesh_text, output_path, verbose=False):
