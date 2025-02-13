@@ -6,9 +6,45 @@
 
 ## Instructions
 
+### Setup
+
+Instantiate a Python virtual environment
+
+```pyenv virtualenv 3.11.6 styx-enchant-env```
+
+Activate virtual environment
+
+```pyenv activate styx-enchant-env```
+
+Install requirements
+
+```pip install -r requirements.txt```
+
 ### Usage
+```shell
+usage: generate.py [-h] [--temperature TEMPERATURE] [--max-tokens MAX_TOKENS] [--output OUTPUT] [--verbose]
+                   [--timeout TIMEOUT]
+                   prompt
+
+Generate 3D meshes using LLaMA-Mesh from command line
+
+positional arguments:
+  prompt                Prompt for generating the 3D mesh
+
+options:
+  -h, --help            show this help message and exit
+  --temperature TEMPERATURE
+                        Temperature for generation (default: 0.95)
+  --max-tokens MAX_TOKENS
+                        Maximum number of tokens to generate (default: 4096)
+  --output OUTPUT       Output filename for the GLB file (default: output.glb)
+  --verbose             Display vertices and faces as they are generated
+  --timeout TIMEOUT     Timeout in seconds for generation (default: 900.0)
+```
 
 ## Example
+
+### Command
 ```shell
 python generate.py "Create a 3D model of a sword" \
   --temperature 0.95 \
