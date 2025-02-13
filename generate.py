@@ -1,15 +1,16 @@
-import os
-import sys
 import argparse
-import tempfile
+import io
 import numpy as np
-import trimesh
-from threading import Thread
-from queue import Empty
-from trimesh.exchange.gltf import export_glb
-import time
+import os
 import psutil
+import sys
+import tempfile
+import time
+import trimesh
 from contextlib import contextmanager
+from queue import Empty
+from threading import Thread
+from trimesh.exchange.gltf import export_glb
 
 # Base configuration
 BASE_NAME = "LLaMA-Mesh"
@@ -86,6 +87,29 @@ def ensure_model_downloaded(repo_id, variant):
     except Exception as e:
         print(f"Error downloading model: {e}")
         raise
+
+@contextmanager
+def suppress_stdout_stderr():
+    """
+    Context manager to suppress stdout and stderr output.
+    """
+    # Save the original stdout/stderr
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+
+    # Create null devices
+    null_stdout = io.StringIO()
+    null_stderr = io.StringIO()
+
+    try:
+        # Redirect stdout/stderr to null devices
+        sys.stdout = null_stdout
+        sys.stderr = null_stderr
+        yield
+    finally:
+        # Restore original stdout/stderr
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Generate 3D meshes using LLaMA-Mesh from command line')
@@ -182,26 +206,39 @@ class LlamaCppBackend:
         if model_path is None:
             model_path = ensure_model_downloaded(DEFAULT_MODEL_REPO, variant)
 
-        self.llm = llama_cpp.Llama(
-            model_path=str(model_path),
-            n_gpu_layers=-1,
-            seed=1337,
-            n_ctx=4096,
-        )
+        # Use context manager to suppress output during model loading
+        with suppress_stdout_stderr():
+            self.llm = llama_cpp.Llama(
+                model_path=str(model_path),
+                n_gpu_layers=-1,
+                seed=1337,
+                n_ctx=4096,
+            )
         if stats:
             stats.model_load_time = time.time() - start_time
 
-    def generate(self, prompt, temperature, max_new_tokens, timeout):
+    def generate(self, prompt, temperature, max_new_tokens, timeout, verbose=False):
         messages = [
             {"role": "system", "content": "You are a helpful assistant that can generate 3D obj files."},
             {"role": "user", "content": prompt}
         ]
-        return self.llm.create_chat_completion(
-            messages=messages,
-            stream=True,
-            temperature=temperature,
-            max_tokens=max_new_tokens
-        )
+
+        # Only suppress output if verbose mode is disabled
+        if not verbose:
+            with suppress_stdout_stderr():
+                return self.llm.create_chat_completion(
+                    messages=messages,
+                    stream=True,
+                    temperature=temperature,
+                    max_tokens=max_new_tokens
+                )
+        else:
+            return self.llm.create_chat_completion(
+                messages=messages,
+                stream=True,
+                temperature=temperature,
+                max_tokens=max_new_tokens
+            )
 
 class OllamaBackend:
     def __init__(self, host, variant=DEFAULT_VARIANT, stats=None):
@@ -409,7 +446,7 @@ def timer(stats_obj, timer_name):
             stats_obj.export_time = elapsed
         stats_obj.update_memory()
 
-def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, verbose=False, stats=None):
+def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=900.0, verbose=False, stats=None):
     """Generate a 3D mesh using the selected backend."""
     try:
         if verbose:
@@ -501,12 +538,13 @@ def main():
 
     try:
         # Initialize the selected backend
-        if args.backend == 'transformers':
-            backend = TransformersBackend(stats)
-        elif args.backend == 'llama_cpp':
+        if args.backend == 'llama_cpp':
             backend = LlamaCppBackend(args.model_path, args.variant, stats)
         elif args.backend == 'ollama':
             backend = OllamaBackend(args.ollama_host, args.variant, stats)
+        else:
+            # default: 'transformers'
+            backend = TransformersBackend(stats)
 
         # Generate the mesh
         mesh_text = generate_mesh(
