@@ -7,6 +7,9 @@ import trimesh
 from threading import Thread
 from queue import Empty
 from trimesh.exchange.gltf import export_glb
+import time
+import psutil
+from contextlib import contextmanager
 
 # Base configuration
 BASE_NAME = "LLaMA-Mesh"
@@ -124,73 +127,19 @@ def parse_arguments():
 
     return args
 
-def apply_gradient_color(mesh_text, output_path, verbose=False):
-    """
-    Apply a gradient color to the mesh vertices based on the Y-axis and save as GLB.
-    """
-    # Create temporary OBJ file
-    temp_file = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
-    with open(temp_file, "w") as f:
-        f.write(mesh_text)
-
-    if verbose:
-        print("\nMesh content:")
-        for line in mesh_text.split('\n'):
-            if line.startswith('v ') or line.startswith('f '):
-                print(line)
-
-    try:
-        mesh = trimesh.load_mesh(temp_file, file_type='obj')
-    except Exception as e:
-        print(f"Error loading mesh: {e}")
-        if verbose:
-            print("Full mesh text:")
-            print(mesh_text)
-        os.unlink(temp_file)
-        return None
-
-    vertices = mesh.vertices
-    if len(vertices) == 0:
-        print("Error: No vertices found in the mesh")
-        os.unlink(temp_file)
-        return None
-
-    if verbose:
-        print(f"\nNumber of vertices: {len(vertices)}")
-        print(f"Number of faces: {len(mesh.faces)}")
-
-    # Apply gradient coloring
-    y_values = vertices[:, 1]
-    y_min, y_max = y_values.min(), y_values.max()
-    y_normalized = np.zeros_like(y_values) if y_min == y_max else (y_values - y_min) / (y_max - y_min)
-
-    colors = np.zeros((len(vertices), 4))
-    colors[:, 0] = y_normalized  # Red channel
-    colors[:, 2] = 1 - y_normalized  # Blue channel
-    colors[:, 3] = 1.0  # Alpha channel
-
-    mesh.visual.vertex_colors = colors
-
-    try:
-        with open(output_path, "wb") as f:
-            f.write(export_glb(mesh))
-    except Exception as e:
-        print(f"Error saving GLB file: {e}")
-        os.unlink(temp_file)
-        return None
-
-    os.unlink(temp_file)
-    return output_path
-
 class TransformersBackend:
-    def __init__(self):
+    def __init__(self, stats=None):
         from transformers import AutoTokenizer, AutoModelForCausalLM
+
+        start_time = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(TRANSFORMERS_MODEL_REPO)
         self.model = AutoModelForCausalLM.from_pretrained(
             TRANSFORMERS_MODEL_REPO,
             device_map="auto",
             torch_dtype="auto"
         )
+        if stats:
+            stats.model_load_time = time.time() - start_time
 
     def generate(self, prompt, temperature, max_new_tokens, timeout):
         from transformers import TextIteratorStreamer
@@ -226,9 +175,10 @@ class TransformersBackend:
         return streamer
 
 class LlamaCppBackend:
-    def __init__(self, model_path=None, variant=DEFAULT_VARIANT):
+    def __init__(self, model_path=None, variant=DEFAULT_VARIANT, stats=None):
         import llama_cpp
 
+        start_time = time.time()
         if model_path is None:
             model_path = ensure_model_downloaded(DEFAULT_MODEL_REPO, variant)
 
@@ -238,6 +188,8 @@ class LlamaCppBackend:
             seed=1337,
             n_ctx=4096,
         )
+        if stats:
+            stats.model_load_time = time.time() - start_time
 
     def generate(self, prompt, temperature, max_new_tokens, timeout):
         messages = [
@@ -252,7 +204,7 @@ class LlamaCppBackend:
         )
 
 class OllamaBackend:
-    def __init__(self, host, variant=DEFAULT_VARIANT):
+    def __init__(self, host, variant=DEFAULT_VARIANT, stats=None):
         from ollama import Client
         self.client = Client(host=host)
 
@@ -265,7 +217,10 @@ class OllamaBackend:
         # Pull the model into Ollama
         print(f"Pulling model into Ollama: {self.model_name}")
         try:
+            start_time = time.time()
             self.client.pull(self.model_name)
+            if stats:
+                stats.model_load_time = time.time() - start_time
         except Exception as e:
             print(f"Error pulling model: {e}")
             raise
@@ -381,18 +336,94 @@ def process_stream(stream, is_ollama=False, verbose=False):
 
     return response
 
-def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, verbose=False):
+class PerformanceStats:
+    def __init__(self):
+        self.start_time = time.time()
+        self.generation_time = 0
+        self.export_time = 0
+        self.total_time = 0
+        self.peak_memory = 0
+        self.initial_memory = self._get_memory_usage()
+        self.model_load_time = 0  # Combined time for downloading and loading model
+
+    @staticmethod
+    def _get_memory_usage():
+        """Get current memory usage in MB"""
+        process = psutil.Process()
+        return process.memory_info().rss / (1024 * 1024)
+
+    def update_memory(self):
+        """Update peak memory usage"""
+        current = self._get_memory_usage()
+        self.peak_memory = max(self.peak_memory, current)
+
+    @staticmethod
+    def get_gpu_stats():
+        """Try to get GPU statistics if available"""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return {
+                    'gpu_memory_allocated': torch.cuda.memory_allocated() / (1024 * 1024),
+                    'gpu_memory_reserved': torch.cuda.memory_reserved() / (1024 * 1024),
+                    'gpu_device': torch.cuda.get_device_name()
+                }
+        except ImportError:
+            pass
+        return None
+
+    def print_report(self):
+        """Print performance statistics"""
+        print("\nPerformance Statistics:")
+        print("-" * 50)
+        print(f"Total Processing Time: {self.total_time:.2f} seconds")
+        print(f"├─ Model Load Time: {self.model_load_time:.2f} seconds")
+        print(f"├─ Generation Time: {self.generation_time:.2f} seconds")
+        print(f"└─ Export Time: {self.export_time:.2f} seconds")
+        print(f"\nMemory Usage:")
+        print(f"├─ Initial: {self.initial_memory:.1f} MB")
+        print(f"├─ Peak: {self.peak_memory:.1f} MB")
+        print(f"└─ Delta: {(self.peak_memory - self.initial_memory):.1f} MB")
+
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        print(f"\nCPU Usage: {cpu_percent}%")
+
+        gpu_stats = self.get_gpu_stats()
+        if gpu_stats:
+            print(f"\nGPU Statistics:")
+            print(f"├─ Device: {gpu_stats['gpu_device']}")
+            print(f"├─ Allocated Memory: {gpu_stats['gpu_memory_allocated']:.1f} MB")
+            print(f"└─ Reserved Memory: {gpu_stats['gpu_memory_reserved']:.1f} MB")
+
+@contextmanager
+def timer(stats_obj, timer_name):
+    """Context manager for timing operations"""
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        elapsed = time.time() - start_time
+        if timer_name == 'generation':
+            stats_obj.generation_time = elapsed
+        elif timer_name == 'export':
+            stats_obj.export_time = elapsed
+        stats_obj.update_memory()
+
+def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, verbose=False, stats=None):
     """Generate a 3D mesh using the selected backend."""
     try:
         if verbose:
             print(f"Generating mesh using {backend.__class__.__name__}")
 
-        stream = backend.generate(prompt, temperature, max_new_tokens, timeout)
-        is_ollama = isinstance(backend, OllamaBackend)
+        with timer(stats, 'generation'):
+            stream = backend.generate(prompt, temperature, max_new_tokens, timeout)
+            is_ollama = isinstance(backend, OllamaBackend)
 
-        response = ""
-        for content in process_stream(stream, is_ollama, verbose):
-            response += content
+            response = ""
+            for content in process_stream(stream, is_ollama, verbose):
+                response += content
+                if stats:
+                    stats.update_memory()
 
         return response
 
@@ -400,21 +431,82 @@ def generate_mesh(backend, prompt, temperature, max_new_tokens, timeout=300.0, v
         print(f"Error during mesh generation: {e}")
         raise
 
+def apply_gradient_color(mesh_text, output_path, verbose=False, stats=None):
+    """Apply a gradient color to the mesh vertices based on the Y-axis and save as GLB."""
+    with timer(stats, 'export'):
+        # Create temporary OBJ file
+        temp_file = tempfile.NamedTemporaryFile(suffix=".obj", delete=False).name
+        with open(temp_file, "w") as f:
+            f.write(mesh_text)
+
+        if verbose:
+            print("\nMesh content:")
+            for line in mesh_text.split('\n'):
+                if line.startswith('v ') or line.startswith('f '):
+                    print(line)
+
+        try:
+            mesh = trimesh.load_mesh(temp_file, file_type='obj')
+        except Exception as e:
+            print(f"Error loading mesh: {e}")
+            if verbose:
+                print("Full mesh text:")
+                print(mesh_text)
+            os.unlink(temp_file)
+            return None
+
+        vertices = mesh.vertices
+        if len(vertices) == 0:
+            print("Error: No vertices found in the mesh")
+            os.unlink(temp_file)
+            return None
+
+        if verbose:
+            print(f"\nNumber of vertices: {len(vertices)}")
+            print(f"Number of faces: {len(mesh.faces)}")
+
+        # Apply gradient coloring
+        y_values = vertices[:, 1]
+        y_min, y_max = y_values.min(), y_values.max()
+        y_normalized = np.zeros_like(y_values) if y_min == y_max else (y_values - y_min) / (y_max - y_min)
+
+        colors = np.zeros((len(vertices), 4))
+        colors[:, 0] = y_normalized  # Red channel
+        colors[:, 2] = 1 - y_normalized  # Blue channel
+        colors[:, 3] = 1.0  # Alpha channel
+
+        mesh.visual.vertex_colors = colors
+
+        try:
+            with open(output_path, "wb") as f:
+                f.write(export_glb(mesh))
+        except Exception as e:
+            print(f"Error saving GLB file: {e}")
+            os.unlink(temp_file)
+            return None
+
+        os.unlink(temp_file)
+        return output_path
+
 def main():
     args = parse_arguments()
     print(f"Generating 3D mesh for prompt: {args.prompt}")
     print(f"Using temperature: {args.temperature}")
+    print(f"Max tokens: {args.max_tokens}")
     print(f"Using backend: {args.backend}")
     print(f"Using model variant: {args.variant}")
+
+    # Initialize performance tracking
+    stats = PerformanceStats()
 
     try:
         # Initialize the selected backend
         if args.backend == 'transformers':
-            backend = TransformersBackend()
+            backend = TransformersBackend(stats)
         elif args.backend == 'llama_cpp':
-            backend = LlamaCppBackend(args.model_path, args.variant)
+            backend = LlamaCppBackend(args.model_path, args.variant, stats)
         elif args.backend == 'ollama':
-            backend = OllamaBackend(args.ollama_host, args.variant)
+            backend = OllamaBackend(args.ollama_host, args.variant, stats)
 
         # Generate the mesh
         mesh_text = generate_mesh(
@@ -423,7 +515,8 @@ def main():
             args.temperature,
             args.max_tokens,
             timeout=args.timeout,
-            verbose=args.verbose
+            verbose=args.verbose,
+            stats=stats
         )
 
         # Look for OBJ content in the response
@@ -435,10 +528,14 @@ def main():
 
         # Extract the OBJ content and apply gradient color
         mesh_content = mesh_text[obj_start:]
-        output_path = apply_gradient_color(mesh_content, args.output, args.verbose)
+        output_path = apply_gradient_color(mesh_content, args.output, args.verbose, stats)
+
+        # Calculate total time and print statistics
+        stats.total_time = time.time() - stats.start_time
+        stats.print_report()
 
         if output_path:
-            print(f"Mesh saved to: {output_path}")
+            print(f"\nMesh saved to: {output_path}")
             return 0
         return 1
 
