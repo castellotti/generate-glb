@@ -1,4 +1,4 @@
-# styx-enchant
+# generate-glb
 
 <div style="text-align:center;">
   <img src="docs/images/wooden_hammer.png" alt="Wooden Hammer" width="360"/>
@@ -10,11 +10,11 @@
 
 Instantiate a Python virtual environment
 
-```pyenv virtualenv 3.11.6 styx-enchant-env```
+```pyenv virtualenv 3.11.6 generate-glb-env```
 
 Activate virtual environment
 
-```pyenv activate styx-enchant-env```
+```pyenv activate generate-glb-env```
 
 Install requirements
 
@@ -94,6 +94,12 @@ CPU Usage: 0.0%
 Mesh saved to: sword.glb
 ```
 
-## References
-- [LLaMa-Mesh](https://github.com/nv-tlabs/LLaMA-Mesh)
-- [meshgen](https://github.com/huggingface/meshgen)
+## Credits & Acknowledgments
+
+This project is based on [LLaMA-Mesh](https://github.com/nv-tlabs/LLaMA-Mesh) and incorporates code licensed under the NVIDIA License.
+
+Original work by **NVIDIA Toronto AI Lab** is licensed under the **NVIDIA License** (see `LICENSE_NVIDIA`).
+
+Modifications and additional code contributions in this repository are licensed under the **MIT License**.
+
+This software also uses the Llama model, which is governed by the **Llama Community License** (see `LICENSE_LLAMA`).
