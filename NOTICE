@@ -1,0 +1,10 @@
+This project is derived from LLaMA-Mesh (https://github.com/nv-tlabs/LLaMA-Mesh),
+which is licensed under the NVIDIA License.
+
+Original work by NVIDIA Toronto AI Lab is included in this repository and remains
+subject to its original license.
+
+Modifications and new code contributions by Steve Castellotti are licensed under
+the MIT License.
+
+This project also uses the Llama model under the Llama Community License.
