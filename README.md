@@ -95,13 +95,8 @@ Mesh saved to: sword.glb
 ```
 
 ## Credits & Acknowledgments
-
-This project is based on [LLaMA-Mesh](https://github.com/nv-tlabs/LLaMA-Mesh) and incorporates code licensed under the NVIDIA License.
-
-Original work by **NVIDIA Toronto AI Lab** is licensed under the **NVIDIA License** (see `LICENSE_NVIDIA`).
-
-This project also derives portions from [meshgen](https://github.com/huggingface/meshgen) (Copyright (c) 2024 Hugging Face) and licensed under the MIT License.
-
-All modifications and additional code contributions in this repository are licensed under the **MIT License** (Copyright (c) 2025 Steven Castellotti).
-
-This software also uses the Llama model, which is governed by the **Llama Community License** (see `LICENSE_LLAMA`).
+- This project is based on [LLaMA-Mesh](https://github.com/nv-tlabs/LLaMA-Mesh) and incorporates code licensed under the NVIDIA License.
+- Original work by **NVIDIA Toronto AI Lab** is licensed under the **NVIDIA License** (see `LICENSE_NVIDIA`).
+- This project also derives portions from [meshgen](https://github.com/huggingface/meshgen) (Copyright (c) 2024 Hugging Face) and licensed under the MIT License.
+- This software also uses the Llama model, which is governed by the **Llama Community License** (see `LICENSE_LLAMA`).
+- All modifications and additional code contributions in this repository are licensed under the **MIT License** (Copyright (c) 2025 Steven Castellotti).
