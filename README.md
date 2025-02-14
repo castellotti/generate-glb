@@ -4,9 +4,27 @@
   <img src="docs/images/wooden_hammer.png" alt="Wooden Hammer" width="360"/>
 </div>
 
+## Features
+- Command line tool to generate 3D models in GLB format
+- Supports hardware acceleration:
+  - NVIDIA CUDA
+  - Apple Metal
+  - Ollama (local and remote servers)
+
+### Tips
+- For Apple Silicon system, running locally with Metal support is available via the `llama_cpp` or `ollama` backends (with Ollama running on the local system or a remote server)
+- For NVIDIA systems, running locally with acceleration is available via the `llama_cpp` or `ollama` backends, or through Docker (see [Containers for Deep Learning Frameworks](https://docs.nvidia.com/deeplearning/frameworks/user-guide/index.html)) 
+- For Docker containers, if NVIDIA CUDA is not available, acceleration is still possible through Ollama (running on the local system or a remote server)
+
 ## Instructions
 
 ### Setup
+```shell
+git clone https://github.com/yourusername/generate-glb.git
+cd generate-glb
+```
+
+#### Local
 
 Instantiate a Python virtual environment
 
@@ -18,9 +36,57 @@ Activate virtual environment
 
 Install requirements
 
-```pip install -r requirements.txt```
+```pip install -r docker/requirements/base.txt```
+
+**Optional**: Install hardware acceleration
+
+##### NVIDIA CUDA
+
+```pip install -r docker/requirements/cuda.txt```
+
+##### Apple Metal
+
+```pip install -r docker/requirements/metal.txt```
+
+##### Llama.cpp Backend (CPU only)
+
+```pip install -r docker/requirements/cpu.txt```
+
+#### Docker
+
+##### Local (CPU only)
+```docker compose -f docker/docker-compose.yml run generate-glb "Create a 3D model of a sword"```
+
+##### Local (NVIDIA CUDA)
+```shell
+ACCELERATION=cuda docker compose \
+  -f docker/docker-compose.yml \
+  run --gpus all generate-glb \
+  "Create a 3D model of a sword"
+```
+
+##### Network (local Ollama)
+```shell
+docker compose \
+  -f docker/docker-compose.yml \
+  run generate-glb \
+  --backend ollama \
+  --ollama-host http://host.docker.internal:11434 \
+  "Create a 3D model of a sword"
+```
+
+##### Network (remote Ollama server)
+```shell
+docker compose \
+  -f docker/docker-compose.yml \
+  run generate-glb \
+  --backend ollama \
+  --ollama-host http://192.168.1.100:11434 \
+  "Create a 3D model of a sword"
+```
 
 ### Usage
+Command: `python src/generate.py --help`
 ```
 usage: generate.py [-h] [--temperature TEMPERATURE] [--max-tokens MAX_TOKENS] [--output OUTPUT] [--verbose]
                    [--timeout TIMEOUT] [--backend {transformers,llama_cpp,ollama}] [--model-path MODEL_PATH]
@@ -51,11 +117,39 @@ options:
   --list-variants       List available model variants and exit
 ```
 
+### Models
+Currently supported model variants ([source](https://huggingface.co/bartowski/LLaMA-Mesh-GGUF))
+```
+Available model variants:
+Variant    Description
+------------------------------------------------------------
+f16        Full F16 weights
+q8_0       Extremely high quality
+q6_k_l     Very high quality with Q8_0 embed/output weights
+q6_k       Very high quality
+q5_k_l     High quality with Q8_0 embed/output weights
+q5_k_m     High quality
+q5_k_s     High quality, smaller
+q4_k_l     Good quality with Q8_0 embed/output weights
+q4_k_m     Good quality, default recommendation
+q4_k_s     Good quality, space optimized
+q3_k_xl    Lower quality with Q8_0 embed/output weights
+q3_k_l     Lower quality
+q3_k_m     Low quality
+q3_k_s     Low quality, not recommended
+q2_k_l     Very low quality with Q8_0 embed/output weights
+q2_k       Very low quality
+iq4_xs     Decent quality, very space efficient
+iq3_m      Medium-low quality
+iq3_xs     Lower quality
+iq2_m      Relatively low quality, SOTA techniques
+```
+
 ## Example
 
 ### Command
 ```shell
-python generate.py \
+python src/generate.py \
   --temperature 0.95 \
   --max-tokens 4096 \
   --output sword.glb \
