@@ -16,3 +16,10 @@ export_presets.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+# IDE configurations
+.idea
+.vscode
+
+# System files
+.DS_Store
