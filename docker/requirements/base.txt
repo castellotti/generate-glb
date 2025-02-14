@@ -1,5 +1,7 @@
 accelerate>=0.26.0
+huggingface_hub>=0.28.1
 numpy>=1.24.0
+ollama>=0.4.7
 psutil>=6.1.1
 torch>=2.0.0
 transformers>=4.37.0
