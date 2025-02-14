@@ -1,5 +1,6 @@
 accelerate>=0.26.0
 numpy>=1.24.0
+psutil>=6.1.1
+torch>=2.0.0
 transformers>=4.37.0
 trimesh>=4.0.0
-torch>=2.0.0
