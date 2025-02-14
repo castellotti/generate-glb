@@ -100,6 +100,8 @@ This project is based on [LLaMA-Mesh](https://github.com/nv-tlabs/LLaMA-Mesh) an
 
 Original work by **NVIDIA Toronto AI Lab** is licensed under the **NVIDIA License** (see `LICENSE_NVIDIA`).
 
-Modifications and additional code contributions in this repository are licensed under the **MIT License**.
+This project also derives portions from [meshgen](https://github.com/huggingface/meshgen) (Copyright (c) 2024 Hugging Face) and licensed under the MIT License.
+
+All modifications and additional code contributions in this repository are licensed under the **MIT License** (Copyright (c) 2025 Steven Castellotti).
 
 This software also uses the Llama model, which is governed by the **Llama Community License** (see `LICENSE_LLAMA`).
