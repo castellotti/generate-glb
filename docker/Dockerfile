@@ -23,7 +23,7 @@ RUN mkdir -p /root/.cache/huggingface
 # CPU target
 FROM base as cpu
 RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cpu.txt
-ENTRYPOINT ["python", "src/generate.py"]
+ENTRYPOINT ["python", "/app/src/generate.py"]
 
 # CUDA target using NVIDIA base image (amd64 only)
 FROM --platform=linux/amd64 nvidia/cuda:12.1.0-runtime-ubuntu22.04 as cuda
@@ -50,7 +50,7 @@ RUN mkdir -p /root/.cache/huggingface
 # Install CUDA-enabled requirements
 RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cuda.txt
 
-ENTRYPOINT ["python", "src/generate.py"]
+ENTRYPOINT ["python", "/app/src/generate.py"]
 
 # Default to CPU target if not specified
 FROM cpu as default
