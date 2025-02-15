@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Base image with common dependencies
-FROM python:3.10-slim as cpu-base
+FROM python:3.10-slim as base
 
 WORKDIR /app
 
@@ -20,9 +20,9 @@ COPY src/ /app/src/
 # Create cache directory for models
 RUN mkdir -p /root/.cache/huggingface
 
-# Install CPU requirements
+# CPU target
+FROM base as cpu
 RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cpu.txt
-
 ENTRYPOINT ["python", "src/generate.py"]
 
 # CUDA target using NVIDIA base image
@@ -53,8 +53,9 @@ RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cuda.txt
 ENTRYPOINT ["python", "src/generate.py"]
 
 # Metal target (Apple Silicon)
-FROM cpu-base as metal
+FROM base as metal
 RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/metal.txt
+ENTRYPOINT ["python", "src/generate.py"]
 
 # Default to CPU target if not specified
-FROM cpu-base as default
+FROM cpu as default
