@@ -2,33 +2,26 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [cpu, cuda]
         include:
           - target: cpu
-            suffix: cpu
             platforms: linux/amd64,linux/arm64
           - target: cuda
-            suffix: cuda
             platforms: linux/amd64  # CUDA only supports amd64
 
     steps:
       - uses: actions/checkout@v3
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-qemu-action@v2
+      - uses: docker/setup-buildx-action@v2
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -38,22 +31,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta
+      - id: meta
         uses: docker/metadata-action@v4
         with:
-          images: |
-            ghcr.io/${{ github.repository }}/generate-glb
+          images: ghcr.io/${{ github.repository }}/generate-glb
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           flavor: |
-            suffix=-${{ matrix.suffix }}
+            suffix=-${{ matrix.target }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v4
+      - uses: docker/build-push-action@v4
         with:
           context: .
           file: docker/Dockerfile
