@@ -314,27 +314,30 @@ def try_parse_number(num_str):
     except ValueError:
         return None
 
-def process_buffer(buffer, verbose=False):
+def process_buffer(buffer, line_type, verbose=False):
     """Process and print buffer contents if it forms a complete vertex or face"""
     if not buffer:
         return
 
-    # Check if we have exactly 3 coordinates for a vertex
-    if len(buffer) == 3 and all(isinstance(x, float) for x in buffer):
-        if verbose:
-            print(f"v {' '.join(str(x) for x in buffer)}")
-        buffer.clear()
-    # Check if we have at least 3 indices for a face
-    elif len(buffer) >= 3 and all(x.is_integer() for x in buffer):
-        if verbose:
-            print(f"f {' '.join(str(int(x)) for x in buffer)}")
-        buffer.clear()
+    if line_type == 'v':
+        # Check if we have exactly 3 coordinates for a vertex
+        if len(buffer) == 3 and all(isinstance(x, float) for x in buffer):
+            if verbose:
+                print(f"v {' '.join(str(int(x)) for x in buffer)}")
+            buffer.clear()
+    elif line_type == 'f':
+        # Check if we have at least 3 indices for a face
+        if len(buffer) >= 3 and all(x.is_integer() for x in buffer):
+            if verbose:
+                print(f"f {' '.join(str(int(x)) for x in buffer)}")
+            buffer.clear()
 
 def process_stream(stream, is_ollama=False, verbose=False):
     """Process the stream with detailed vertex/face parsing for verbose output"""
     response = ""
     buffer = []
     number_buffer = ""
+    current_type = None  # Track whether we're processing a vertex or face
 
     try:
         for chunk in stream:
@@ -360,27 +363,29 @@ def process_stream(stream, is_ollama=False, verbose=False):
                             num = try_parse_number(number_buffer)
                             if num is not None:
                                 buffer.append(num)
-                                process_buffer(buffer, verbose)
+                                process_buffer(buffer, current_type, verbose)
                             number_buffer = ""
                     elif char.isdigit() or char == '.' or char == '-':
                         number_buffer += char
                     elif char == 'v':
                         if buffer:
-                            process_buffer(buffer, verbose)
+                            process_buffer(buffer, current_type, verbose)
                         buffer = []
                         number_buffer = ""
+                        current_type = 'v'
                     elif char == 'f':
                         if buffer:
-                            process_buffer(buffer, verbose)
+                            process_buffer(buffer, current_type, verbose)
                         buffer = []
                         number_buffer = ""
+                        current_type = 'f'
 
                 # Handle any remaining complete number in the buffer
                 if number_buffer:
                     num = try_parse_number(number_buffer)
                     if num is not None:
                         buffer.append(num)
-                        process_buffer(buffer, verbose)
+                        process_buffer(buffer, current_type, verbose)
 
             yield content
 
@@ -388,7 +393,7 @@ def process_stream(stream, is_ollama=False, verbose=False):
         print("Warning: Generation timed out")
 
     if buffer and verbose:
-        process_buffer(buffer, verbose)
+        process_buffer(buffer, current_type, verbose)
 
     return response
 
