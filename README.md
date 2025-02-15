@@ -1,8 +1,12 @@
 # generate-glb
 
+Generate 3D models using AI
+
 <div style="text-align:center;">
   <img src="docs/images/wooden_hammer.png" alt="Wooden Hammer" width="360"/>
 </div>
+
+(screenshot taken inside [Godot Engine](https://godotengine.org/) editor)
 
 ## Features
 - Command line tool to generate 3D models in GLB format
@@ -10,11 +14,26 @@
   - NVIDIA CUDA
   - Apple Metal
   - Ollama (local and remote servers)
+- Support local installation or Docker container
 
 ### Tips
 - For Apple Silicon system, running locally with Metal support is available via the `llama_cpp` or `ollama` backends (with Ollama running on the local system or a remote server)
 - For NVIDIA systems, running locally with acceleration is available via the `llama_cpp` or `ollama` backends, or through Docker (see [Containers for Deep Learning Frameworks](https://docs.nvidia.com/deeplearning/frameworks/user-guide/index.html)) 
 - For Docker containers, if NVIDIA CUDA is not available, acceleration is still possible through Ollama (running on the local system or a remote server)
+
+## Quick Start
+- [Download](https://ollama.com/download), install, and run Ollama
+- Run using [Docker](https://docs.docker.com/desktop/setup/install/mac-install/) (update output file and prompt as desired):
+```shell
+docker run \
+  -v ${PWD}:/app/output \
+  -w /app/output \
+  ghcr.io/castellotti/generate-glb/generate-glb:main-cpu  \
+  --backend ollama \
+  --ollama-host host.docker.internal:11434  \
+  --output sword.glb  \
+  "Create a 3D model of a sword"
+```
 
 ## Instructions
 
@@ -186,6 +205,36 @@ Memory Usage:
 CPU Usage: 0.0%
 
 Mesh saved to: sword.glb
+```
+
+### Docker Examples
+
+#### Remote Server
+The following command will execute locally but use a remote Ollama server for generation:
+```shell
+docker run \
+  --network host \
+  -v ${PWD}:/app/output \
+  -w /app/output \
+  ghcr.io/castellotti/generate-glb/generate-glb:main-cpu \
+  --backend ollama \
+  --ollama-host http://192.168.1.100:11434 \
+  --output sword.glb \
+  "Create a 3D model of a sword"
+```
+
+#### Local CUDA
+The following command will execute locally using NVIDIA CUDA acceleration:
+```shell
+docker run \
+  -v ${PWD}:/app/output \
+  -w /app/output \
+  ghcr.io/castellotti/generate-glb/generate-glb:main-cuda \
+  --backend ollama \
+  --ollama-host \
+  host.docker.internal:11434 \
+  --output sword.glb \
+  "Create a 3D model of a sword"
 ```
 
 ## Credits & Acknowledgments
