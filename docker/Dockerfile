@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Base image with common dependencies
-FROM python:3.10-slim as base
+FROM --platform=$TARGETPLATFORM python:3.10-slim as base
 
 WORKDIR /app
 
@@ -25,8 +25,8 @@ FROM base as cpu
 RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cpu.txt
 ENTRYPOINT ["python", "src/generate.py"]
 
-# CUDA target using NVIDIA base image
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04 as cuda
+# CUDA target using NVIDIA base image (amd64 only)
+FROM --platform=linux/amd64 nvidia/cuda:12.1.0-runtime-ubuntu22.04 as cuda
 
 # Set up Python and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
