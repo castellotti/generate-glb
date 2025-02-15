@@ -9,6 +9,8 @@ services:
       target: ${ACCELERATION:-cpu}  # Default to CPU if not specified
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      - ${PWD}:/app/output  # Mount the directory where the command is run
     environment:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}  # For CUDA builds
-    entrypoint: ["python", "src/generate.py"]
+    working_dir: /app/output  # Set working directory to the mounted volume
+    entrypoint: ["python", "/app/src/generate.py"]
