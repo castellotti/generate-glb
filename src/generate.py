@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+generate.py
+
+Copyright (c) 2025 Steven Castellotti
+Licensed under the MIT License. See LICENSE file for details.
+
+Description:
+    This script generates 3D meshes using the LLaMA-Mesh model and exports them in GLB format.
+    It utilizes `trimesh` for mesh processing and `psutil` for system resource monitoring.
+    Supported backends include PyTorch, llama.cpp, and Ollama.
+    Hardware acceleration is supported via NVIDIA CUDA or Apple Metal.
+
+Author: Steven Castellotti
+Version: 1.0.0
+Date: 2025-02-14
+"""
+
 import argparse
 import io
 import numpy as np
