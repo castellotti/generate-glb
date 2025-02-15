@@ -52,10 +52,5 @@ RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cuda.txt
 
 ENTRYPOINT ["python", "src/generate.py"]
 
-# Metal target (Apple Silicon)
-FROM base as metal
-RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/metal.txt
-ENTRYPOINT ["python", "src/generate.py"]
-
 # Default to CPU target if not specified
 FROM cpu as default
