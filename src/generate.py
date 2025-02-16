@@ -13,8 +13,8 @@ Description:
     Hardware acceleration is supported via NVIDIA CUDA or Apple Metal.
 
 Author: Steven Castellotti
-Version: 1.0.0
-Date: 2025-02-14
+Version: 1.1.0
+Date: 2025-02-16
 """
 
 import argparse
@@ -107,6 +107,38 @@ def ensure_model_downloaded(repo_id, variant):
         print(f"Error downloading model: {e}")
         raise
 
+def get_device_config():
+    """Get platform-specific device configuration"""
+    import torch
+    import platform
+
+    config = {
+        'device_map': 'auto',
+        'torch_dtype': 'auto',
+        'low_cpu_mem_usage': True
+    }
+
+    if platform.system() == 'Darwin':
+        if torch.backends.mps.is_available():
+            # macOS-specific optimizations
+            config.update({
+                'device': 'mps',
+                'torch_dtype': torch.float16
+            })
+    elif torch.cuda.is_available():
+        # CUDA-specific optimizations
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        config.update({
+            'device': 'cuda'
+        })
+    else:
+        config.update({
+            'device': 'cpu'
+        })
+
+    return config
+
 @contextmanager
 def suppress_stdout_stderr():
     """
@@ -173,23 +205,44 @@ def parse_arguments():
 class TransformersBackend:
     def __init__(self, stats=None):
         from transformers import AutoTokenizer, AutoModelForCausalLM
+        import platform
 
         start_time = time.time()
         self.tokenizer = AutoTokenizer.from_pretrained(TRANSFORMERS_MODEL_REPO)
+
+        # Get platform-specific configuration
+        config = get_device_config()
+
         self.model = AutoModelForCausalLM.from_pretrained(
             TRANSFORMERS_MODEL_REPO,
-            device_map="auto",
-            torch_dtype="auto"
+            device_map=config['device_map'],
+            torch_dtype=config['torch_dtype'],
+            low_cpu_mem_usage=config['low_cpu_mem_usage']
         )
+
         if stats:
             stats.model_load_time = time.time() - start_time
 
     def generate(self, prompt, temperature, max_new_tokens, timeout):
         from transformers import TextIteratorStreamer
+        import platform
+        import torch
+
+        # Platform-specific memory optimization
+        if platform.system() == 'Darwin' and torch.backends.mps.is_available():
+            if hasattr(torch.mps, 'empty_cache'):  # Check if available
+                torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         conversation = [{"role": "user", "content": prompt}]
-        inputs = self.tokenizer.apply_chat_template(conversation, return_tensors="pt")
-        attention_mask = inputs.ne(self.tokenizer.pad_token_id).to(self.model.device)
-        inputs = inputs.to(self.model.device)
+        inputs = self.tokenizer.apply_chat_template(
+            conversation,
+            return_tensors="pt",
+            add_generation_prompt=True
+        ).to(self.model.device)
+
+        attention_mask = inputs.ne(self.tokenizer.pad_token_id)
 
         streamer = TextIteratorStreamer(
             self.tokenizer,
@@ -209,7 +262,10 @@ class TransformersBackend:
             "eos_token_id": [
                 self.tokenizer.eos_token_id,
                 self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
-            ]
+            ],
+            "use_cache": True,
+            "num_beams": 1,
+            "early_stopping": True
         }
 
         thread = Thread(target=self.model.generate, kwargs=generate_kwargs)
@@ -423,7 +479,16 @@ class PerformanceStats:
         """Try to get GPU statistics if available"""
         try:
             import torch
-            if torch.cuda.is_available():
+            import platform
+
+            if platform.system() == 'Darwin' and torch.backends.mps.is_available():
+                # For MPS, we can only report if it's available since memory metrics
+                # are not directly accessible
+                return {
+                    'gpu_device': 'Apple Metal',
+                    'gpu_status': 'Active and available'
+                }
+            elif torch.cuda.is_available():
                 return {
                     'gpu_memory_allocated': torch.cuda.memory_allocated() / (1024 * 1024),
                     'gpu_memory_reserved': torch.cuda.memory_reserved() / (1024 * 1024),
