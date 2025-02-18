@@ -14,3 +14,17 @@ services:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}  # For CUDA builds
     working_dir: /app/output  # Set working directory to the mounted volume
     entrypoint: ["python", "/app/src/generate.py"]
+
+  server:
+    image: generate-glb
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: ${ACCELERATION:-cpu}
+    ports:
+      - "${PORT:-11434}:11434"
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+    command: ["python", "/app/src/server.py", "--host", "0.0.0.0", "--port", "11434"]
