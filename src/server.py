@@ -110,6 +110,10 @@ class MeshLogger:
 
 def setup_logging(log_dir: Path):
     """Enhanced logging setup with mesh-specific logging"""
+    # Add logging configuration if directory doesn't exist
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+        os.makedirs(log_dir / 'meshes', exist_ok=True)
     # Ensure log directory exists
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -145,7 +149,7 @@ def setup_logging(log_dir: Path):
     access_handler.setFormatter(JSONFormatter())
     access_logger.addHandler(access_handler)
 
-    return app_logger, access_logger, mesh_logger
+    return app_logger, access_logger
 
 # Rate limiting
 class RateLimiter:
@@ -206,6 +210,7 @@ class MeshGenerationServer:
 
         # Set up logging
         self.logger, self.access_logger = setup_logging(log_dir)
+        self.mesh_log_manager = MeshLogger(log_dir)
 
         # Set up rate limiting and resource management
         self.rate_limiter = RateLimiter(requests_per_minute=10)
@@ -267,6 +272,9 @@ class MeshGenerationServer:
         try:
             self.logger.info(f"Starting mesh generation for {ip}")
 
+            # Start a new mesh log file
+            self.mesh_log_manager.start_new_log(prompt)
+
             stream = self.backend.generate(
                 prompt,
                 temperature,
@@ -280,15 +288,42 @@ class MeshGenerationServer:
 
             # Process stream
             async def process_async():
+                collecting_mesh = False
+                current_line = ""
+
                 for content in process_stream(stream, is_ollama=False, verbose=True):
                     if content:
+                        # Start collecting after we see the obj marker
+                        if "```obj" in content:
+                            collecting_mesh = True
+                            continue
+                        # Stop collecting if we see the closing marker
+                        elif "```" in content and collecting_mesh:
+                            collecting_mesh = False
+                            if current_line:
+                                self.mesh_log_manager.log_mesh_data(current_line)
+                                current_line = ""
+                            continue
+
+                        if collecting_mesh:
+                            current_line += content
+                            if "\n" in content:
+                                lines = current_line.split("\n")
+                                # Process all complete lines
+                                for line in lines[:-1]:
+                                    if line.strip():
+                                        self.mesh_log_manager.log_mesh_data(line)
+                                # Keep the incomplete line
+                                current_line = lines[-1]
+
                         await response.write(self.create_response_json(content).encode())
                         await asyncio.sleep(0.01)
 
             await process_async()
 
-            # Send closing tokens
+            # Send closing tokens and finalize log
             await response.write(self.create_response_json("```\n").encode())
+            self.mesh_log_manager.close_current_log()
 
             # Send final done message
             final_response = {
@@ -336,12 +371,7 @@ class MeshGenerationServer:
         try:
             # Parse request body
             body = await request.json()
-
-            # Extract parameters
             prompt = body.get('prompt')
-            options = body.get('options', {})
-            temperature = options.get('temperature', 0.95)
-            max_tokens = options.get('num_predict', 4096)
 
             if not prompt:
                 return web.Response(
@@ -349,6 +379,24 @@ class MeshGenerationServer:
                     text=json.dumps({"error": "Missing prompt parameter"}),
                     content_type='application/json'
                 )
+
+            # Include prompt in access log
+            log_data = RequestLogData(
+                timestamp=datetime.datetime.utcnow().isoformat(),
+                ip=ip,
+                method=request.method,
+                path=request.path,
+                user_agent=request.headers.get('User-Agent', 'Unknown'),
+                status=200,
+                duration=0,  # Will be updated in middleware
+                prompt=prompt
+            )
+            self.access_logger.info(log_data)
+
+            # Extract parameters
+            options = body.get('options', {})
+            temperature = options.get('temperature', 0.95)
+            max_tokens = options.get('num_predict', 4096)
 
             # Set up streaming response
             response = web.StreamResponse(
@@ -362,7 +410,7 @@ class MeshGenerationServer:
             await response.prepare(request)
 
             # Generate and stream the mesh
-            success = await self.stream_response(
+            await self.stream_response(
                 prompt, temperature, max_tokens, ip, response
             )
 
