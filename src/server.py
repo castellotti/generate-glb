@@ -13,6 +13,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ class RequestLogData:
     user_agent: str
     status: int
     duration: float
+    prompt: str = None
     error: str = None
 
 class JSONFormatter(logging.Formatter):
@@ -41,7 +43,73 @@ class JSONFormatter(logging.Formatter):
             return json.dumps(record.msg.__dict__)
         return super().format(record)
 
+class MeshFormatter(logging.Formatter):
+    def format(self, record):
+        if isinstance(record.msg, str):
+            return record.msg
+        return super().format(record)
+
+def sanitize_filename(prompt):
+    """Convert prompt to a safe filename"""
+    # Remove or replace invalid filename characters
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', prompt)
+    # Limit length and add timestamp
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    truncated = safe_name[:50] if len(safe_name) > 50 else safe_name
+    return f"{timestamp}_{truncated}.log"
+
+class MeshLogger:
+    def __init__(self, log_dir: Path):
+        self.log_dir = log_dir
+        self.current_file = None
+        self.current_logger = None
+
+    def start_new_log(self, prompt: str):
+        """Start a new log file for a mesh generation request"""
+        filename = sanitize_filename(prompt)
+        self.current_file = self.log_dir / 'meshes' / filename
+
+        # Ensure meshes subdirectory exists
+        self.current_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create a new logger for this mesh
+        logger_name = f"mesh_{filename}"
+        self.current_logger = logging.getLogger(logger_name)
+        self.current_logger.setLevel(logging.INFO)
+
+        # Remove any existing handlers
+        self.current_logger.handlers.clear()
+
+        # Add file handler
+        handler = logging.FileHandler(self.current_file)
+        handler.setFormatter(MeshFormatter())
+        self.current_logger.addHandler(handler)
+
+        # Log initial information
+        self.current_logger.info(f"Mesh generation started at: {datetime.datetime.now().isoformat()}")
+        self.current_logger.info(f"Prompt: {prompt}\n")
+
+        return self.current_logger
+
+    def log_mesh_data(self, content: str):
+        """Log mesh vertex and face data"""
+        if self.current_logger and content:
+            # Only log lines starting with 'v ' or 'f '
+            for line in content.split('\n'):
+                if line.strip().startswith(('v ', 'f ')):
+                    self.current_logger.info(line.strip())
+
+    def close_current_log(self):
+        """Close the current mesh log file"""
+        if self.current_logger:
+            self.current_logger.info(f"\nMesh generation completed at: {datetime.datetime.now().isoformat()}")
+            for handler in self.current_logger.handlers:
+                handler.close()
+            self.current_logger = None
+            self.current_file = None
+
 def setup_logging(log_dir: Path):
+    """Enhanced logging setup with mesh-specific logging"""
     # Ensure log directory exists
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -52,6 +120,10 @@ def setup_logging(log_dir: Path):
     # Configure access logger
     access_logger = logging.getLogger('access')
     access_logger.setLevel(logging.INFO)
+
+    # Configure mesh logger (for vertex/face data)
+    mesh_logger = logging.getLogger('mesh')
+    mesh_logger.setLevel(logging.INFO)
 
     # Rotating file handler for application logs
     app_handler = logging.handlers.RotatingFileHandler(
@@ -73,7 +145,7 @@ def setup_logging(log_dir: Path):
     access_handler.setFormatter(JSONFormatter())
     access_logger.addHandler(access_handler)
 
-    return app_logger, access_logger
+    return app_logger, access_logger, mesh_logger
 
 # Rate limiting
 class RateLimiter:
