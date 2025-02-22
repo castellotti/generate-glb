@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir \
 CMD ["python", "/app/src/generate.py"]
 
 # CUDA target using NVIDIA base image (amd64 only)
-FROM --platform=linux/amd64 nvidia/cuda:12.8.0-runtime-ubuntu24.04 as cuda
+FROM --platform=linux/amd64 nvidia/cuda:12.4.0-runtime-ubuntu24.04 as cuda
 
 # Set up Python and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
